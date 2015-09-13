@@ -179,6 +179,7 @@ class Solver(object):
         self._use_old_bc_sig = False
         self.accept_step = True
         self.before_step = None
+        self.use_jit = False
 
         # select package to build solver objects from, by default this will be
         # the package that contains the module implementing the derived class

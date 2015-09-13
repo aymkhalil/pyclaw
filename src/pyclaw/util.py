@@ -119,6 +119,8 @@ def run_app_from_main(application,setplot=None):
 
     # Solve
     status = claw.run()
+    logging.info(str.format('Total roe_averages time = {0} seconds', claw.solver.roe_averages_tottime))
+    logging.info(str.format('Total euler_roe_1D time = {0} seconds', claw.solver.euler_roe_1D_tottime))
 
     # Plot results
     htmlplot = pyclaw_kwargs.get('htmlplot',False)

@@ -11,6 +11,8 @@ are the dimension-specific ones, :class:`ClawSolver1D` and :class:`ClawSolver2D`
 from clawpack.pyclaw.util import add_parent_doc
 from clawpack.pyclaw.solver import Solver
 from clawpack.pyclaw.limiters import tvd
+import time
+import numpy as np
 
 # ============================================================================
 #  Generic Clawpack solver class
@@ -87,6 +89,8 @@ class ClawSolver(Solver):
         self._mthlim = self.limiters
         self._method = None
         self.dt_old = None
+        self.euler_roe_1D_tottime = -1 #skip the first call to exclude compilation time
+        self.roe_averages_tottime = -1 #we need to time roe_averages alone as it is the maximum scope to which jit nopython mode has been applied
 
         # Call general initialization function
         super(ClawSolver,self).__init__(riemann_solver,claw_package)
@@ -316,16 +320,36 @@ class ClawSolver1D(ClawSolver):
                 dtdx += self.dt/grid.delta[0]
         
             # Solve Riemann problem at each interface
-            q_l=q[:,:-1]
-            q_r=q[:,1:]
+            q_l=np.ascontiguousarray(q[:,:-1])
+            q_r=np.ascontiguousarray(q[:,1:])
             if state.aux is not None:
                 aux_l=aux[:,:-1]
                 aux_r=aux[:,1:]
             else:
                 aux_l = None
                 aux_r = None
-            wave,s,amdq,apdq = self.rp(q_l,q_r,aux_l,aux_r,state.problem_data)
-            
+
+            q_l0 = np.ascontiguousarray(q_l[0,:])
+            q_l1 = np.ascontiguousarray(q_l[1,:])
+            q_l2 = np.ascontiguousarray(q_l[2,:])
+
+            q_r0 = np.ascontiguousarray(q_r[0,:])
+            q_r1 = np.ascontiguousarray(q_r[1,:])
+            q_r2 = np.ascontiguousarray(q_r[2,:])
+            delta = np.ascontiguousarray(q_r - q_l)
+
+            t1 = time.time()
+            wave,s,amdq,apdq, roe_time = self.rp(q_l,q_l0, q_l1, q_l2, q_r,q_r0, q_r1, q_r2, delta, aux_l,aux_r,state.problem_data['gamma1'], state.problem_data['efix'])
+
+            if self.euler_roe_1D_tottime < 0:
+                self.euler_roe_1D_tottime += 1
+            else:
+                self.euler_roe_1D_tottime += time.time() - t1
+
+            if self.roe_averages_tottime < 0:
+                self.roe_averages_tottime += 1
+            else:
+                self.roe_averages_tottime += roe_time
             # Update loop limits, these are the limits for the Riemann solver
             # locations, which then update a grid cell value
             # We include the Riemann problem just outside of the grid so we can
