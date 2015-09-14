@@ -147,9 +147,12 @@ def minmod_limiter(r,cfl):
     
     a[1,:] = r
     
-    b[1,:] = np.min(a,axis=0)
-    
-    return np.max(b,axis=0)
+    b[1,:] = np.minimum(a[0], a[1])
+
+    #assert np.array_equal(np.minimum(a[0], a[1]), np.min(a,axis=0))
+    #assert np.array_equal(np.maximum(b[0], b[1]), np.max(b,axis=0))
+
+    return np.maximum(b[0], b[1])
     
 
 def superbee_limiter(r,cfl):

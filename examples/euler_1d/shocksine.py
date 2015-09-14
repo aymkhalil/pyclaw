@@ -37,8 +37,8 @@ a = np.array([[0., 0., 0., 0., 0., 0., 0.],
 b = np.array([.206734020864804, .206734020864804, .117097251841844, .181802560120140, .287632146308408])
 c = np.array([0., .3772689153313680, .7545378306627360, .7289856616121880, .6992261359316680])
 
-def setup(use_petsc=False,iplot=False,htmlplot=False,outdir='./_output',solver_type='sharpclaw',
-        kernel_language='Fortran',use_char_decomp=False,tfluct_solver=True):
+def setup(use_petsc=False,iplot=False,htmlplot=False,outdir='./_output',solver_type='classic',
+        kernel_language='Python',use_char_decomp=False,tfluct_solver=True):
 
     if use_petsc:
         import clawpack.petclaw as pyclaw
@@ -87,12 +87,13 @@ def setup(use_petsc=False,iplot=False,htmlplot=False,outdir='./_output',solver_t
     solver.bc_lower[0]=pyclaw.BC.extrap
     solver.bc_upper[0]=pyclaw.BC.extrap
 
-    mx = 400;
+    mx = 4000;
     x = pyclaw.Dimension(-5.0,5.0,mx,name='x')
     domain = pyclaw.Domain([x])
     state = pyclaw.State(domain,num_eqn)
 
     state.problem_data['gamma']= gamma
+    state.problem_data['gamma1']= gamma - 1
 
     if kernel_language =='Python':
         state.problem_data['efix'] = False
@@ -107,10 +108,10 @@ def setup(use_petsc=False,iplot=False,htmlplot=False,outdir='./_output',solver_t
     state.q[energy  ,:] = pressure/(gamma - 1.) + 0.5 * state.q[density,:] * velocity**2
 
     claw = pyclaw.Controller()
-    claw.tfinal = 1.8
+    claw.tfinal = 3.6
     claw.solution = pyclaw.Solution(state,domain)
     claw.solver = solver
-    claw.num_output_times = 10
+    claw.num_output_times = 20
     claw.outdir = outdir
     claw.setplot = setplot
     claw.keep_copy = True
@@ -149,6 +150,10 @@ def setplot(plotdata):
     plotaxes.xlimits = (-5.,5.)
     
     return plotdata
+
+def run():
+    from clawpack.pyclaw.util import run_app_from_main
+    output = run_app_from_main(setup,setplot)
 
 if __name__=="__main__":
     from clawpack.pyclaw.util import run_app_from_main
