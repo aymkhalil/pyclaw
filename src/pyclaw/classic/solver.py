@@ -11,6 +11,7 @@ are the dimension-specific ones, :class:`ClawSolver1D` and :class:`ClawSolver2D`
 from clawpack.pyclaw.util import add_parent_doc
 from clawpack.pyclaw.solver import Solver
 from clawpack.pyclaw.limiters import tvd
+import time
 
 # ============================================================================
 #  Generic Clawpack solver class
@@ -87,6 +88,8 @@ class ClawSolver(Solver):
         self._mthlim = self.limiters
         self._method = None
         self.dt_old = None
+        self.euler_roe_1D_tottime = -1 #skip the first call to exclude compilation time
+        self.roe_averages_tottime = -1 #we need to time roe_averages alone as it is the maximum scope to which jit nopython mode has been applied
 
         # Call general initialization function
         super(ClawSolver,self).__init__(riemann_solver,claw_package)
@@ -324,8 +327,19 @@ class ClawSolver1D(ClawSolver):
             else:
                 aux_l = None
                 aux_r = None
-            wave,s,amdq,apdq = self.rp(q_l,q_r,aux_l,aux_r,state.problem_data)
-            
+
+            t1 = time.time()
+            wave,s,amdq,apdq, roe_time = self.rp(q_l, q_r, aux_l,aux_r, state.problem_data['gamma1'], state.problem_data['efix'])
+
+            if self.euler_roe_1D_tottime < 0:
+                self.euler_roe_1D_tottime += 1
+            else:
+                self.euler_roe_1D_tottime += time.time() - t1
+
+            if self.roe_averages_tottime < 0:
+                self.roe_averages_tottime += 1
+            else:
+                self.roe_averages_tottime += roe_time
             # Update loop limits, these are the limits for the Riemann solver
             # locations, which then update a grid cell value
             # We include the Riemann problem just outside of the grid so we can
