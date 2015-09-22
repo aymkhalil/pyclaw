@@ -107,13 +107,13 @@ def limit_compiled(num_eqn,wave,s,limiter,dtdx):
     # so the norm of the cell i for wave number j is addressed
     # as wave_norm2[i,j]
     wave_norm2 = np.empty((wave.shape[1], wave.shape[2]), dtype=np.float64)
-    for i in range(wave.shape[1]):
-        for j in range(wave.shape[2]):
+    for i in xrange(wave.shape[1]):
+        for j in xrange(wave.shape[2]):
             wave_norm2[i, j] = (wave[0, i, j]**2) + (wave[1, i, j]**2) + (wave[2, i, j]**2)
 
     wave_zero_mask = np.empty(wave_norm2.shape, dtype=np.float64)
-    for i in range(wave_norm2.shape[0]):
-        for j in range(wave_norm2.shape[1]):
+    for i in xrange(wave_norm2.shape[0]):
+        for j in xrange(wave_norm2.shape[1]):
             wave_zero_mask[i, j] = (wave_norm2[i, j] == 0)
 
     wave_nonzero_mask = (1.0 - wave_zero_mask)
@@ -122,20 +122,20 @@ def limit_compiled(num_eqn,wave,s,limiter,dtdx):
     # along the num_eqn axis.  For reference, dotls[0,:,:] is the dot
     # product of the 0 cell and the 1 cell.
     tmp_dotls = np.empty((wave.shape[0], wave.shape[1], wave.shape[2] - 1), dtype=np.float64)
-    for i in range(wave.shape[0]):
-        for j in range(wave.shape[1]):
-            for k in range(wave.shape[2] - 1):
+    for i in xrange(wave.shape[0]):
+        for j in xrange(wave.shape[1]):
+            for k in xrange(wave.shape[2] - 1):
                 tmp_dotls[i, j, k] = wave[i, j, k + 1] * wave[i, j, k]
 
     dotls = np.empty((tmp_dotls.shape[1], tmp_dotls.shape[2]), dtype=np.float64)
-    for i in range(tmp_dotls.shape[1]):
-        for j in range(tmp_dotls.shape[2]):
+    for i in xrange(tmp_dotls.shape[1]):
+        for j in xrange(tmp_dotls.shape[2]):
             dotls[i, j] = tmp_dotls[0, i, j] + tmp_dotls[1, i, j] + tmp_dotls[2, i, j]
 
     # array containing ones where s > 0, zeros elsewhere
     spos = np.empty((s.shape[0], s.shape[1] - 2), dtype=np.float64)
-    for i in range(s.shape[0]):
-        for j in range(s.shape[1] - 2):
+    for i in xrange(s.shape[0]):
+        for j in xrange(s.shape[1] - 2):
             spos[i, j] = s[i, j + 1] > 0.0
 
     # Here we construct a masked array, then fill the empty values with 0,
@@ -143,8 +143,8 @@ def limit_compiled(num_eqn,wave,s,limiter,dtdx):
     # Take upwind dot product
 
     r = np.empty((s.shape[0], s.shape[1] - 2), dtype=np.float64)
-    for i in range(s.shape[0]):
-        for j in range(s.shape[1] - 2):
+    for i in xrange(s.shape[0]):
+        for j in xrange(s.shape[1] - 2):
             r[i, j] = 0 if wave_norm2[i, j+1] == 0 else (spos[i, j] * dotls[i,j] + (1 - spos[i, j]) * dotls[i , j + 1]) / wave_norm2[i, j+1]
 
     for mw in xrange(wave.shape[1]):
@@ -219,16 +219,16 @@ def limit(num_eqn,wave,s,limiter,dtdx):
 
 @jit(nopython=True, cache=True)
 def apply_wave_limiter(dtdx, mw, num_eqn, r, s, spos, wave, wave_nonzero_mask, wave_zero_mask):
+    cfl = np.empty(s[mw].shape[0] - 2)
     for m in xrange(num_eqn):
-        cfl = np.empty(s[mw].shape[0] - 2)
-        for i in range(s[mw].shape[0] - 2):
+        for i in xrange(s[mw].shape[0] - 2):
             cfl[i] = abs(s[mw,i+1]*(dtdx[i+1]*spos[mw,i]
                                         + (1-spos[mw,i])*dtdx[i+2]))
 
         #wlimitr = limit_func(r[mw, :], cfl)
         wlimitr = minmod_limiter_compiled(r[mw, :], cfl)
 
-        for i in range(1, wave.shape[2]-1):
+        for i in xrange(1, wave.shape[2]-1):
             wave[m, mw, i] = wave[m, mw, i] * wave_zero_mask[mw, i] \
                             + wlimitr[i-1] * wave[m, mw, i] * wave_nonzero_mask[mw, i]
 
@@ -237,7 +237,7 @@ def minmod_limiter_compiled(r,cfl):
     r"""
     Minmod vectorized limiter
     """
-    for i in range(len(r)):
+    for i in xrange(len(r)):
         r[i] = max(0, min(r[i], 1))
 
     return r
