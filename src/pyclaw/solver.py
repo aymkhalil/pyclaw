@@ -191,6 +191,8 @@ class Solver(object):
         else:
             def get_clawpack_dot_xxx(modname): return modname.rpartition('.')[0].rpartition('.')[0]
             claw_package_name = get_clawpack_dot_xxx(self.__module__)
+            # Had to do that to load solver_cy cython module!
+            if claw_package_name.split('.')[0] <> "clawpack":   claw_package_name = 'clawpack.' + claw_package_name
             if claw_package_name in sys.modules:
                 self.claw_package = sys.modules[claw_package_name]
             else:

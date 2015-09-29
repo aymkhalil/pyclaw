@@ -115,6 +115,7 @@ def setup(use_petsc=False,iplot=False,htmlplot=False,outdir='./_output',solver_t
     claw.outdir = outdir
     claw.setplot = setplot
     claw.keep_copy = True
+    claw.output_format = None
 
     return claw
 

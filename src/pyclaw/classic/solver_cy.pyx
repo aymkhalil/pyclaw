@@ -10,8 +10,13 @@ are the dimension-specific ones, :class:`ClawSolver1D` and :class:`ClawSolver2D`
 
 from clawpack.pyclaw.util import add_parent_doc
 from clawpack.pyclaw.solver import Solver
-from clawpack.pyclaw.limiters import tvd
-import time
+from clawpack.pyclaw.limiters import tvd_cy as tvd
+
+import numpy as np
+cimport numpy as np
+import cython
+
+use_cython = True
 
 # ============================================================================
 #  Generic Clawpack solver class
@@ -87,7 +92,6 @@ class ClawSolver(Solver):
         self.cfl_desired = 0.9
         self._mthlim = self.limiters
         self._method = None
-        self.dt_old = None
         self.dt_old = None
 
         # Call general initialization function
@@ -285,8 +289,6 @@ class ClawSolver1D(ClawSolver):
          - *solution* - (:class:`~pyclaw.solution.Solution`) Solution that 
            will be evolved
         """
-        import numpy as np
-
         state = solution.states[0]
         grid = state.grid
 
@@ -318,8 +320,8 @@ class ClawSolver1D(ClawSolver):
                 dtdx += self.dt/grid.delta[0]
         
             # Solve Riemann problem at each interface
-            q_l=q[:,:-1]
-            q_r=q[:,1:]
+            q_l=np.ascontiguousarray(q[:,:-1])
+            q_r=np.ascontiguousarray(q[:,1:])
             if state.aux is not None:
                 aux_l=aux[:,:-1]
                 aux_r=aux[:,1:]
@@ -327,7 +329,7 @@ class ClawSolver1D(ClawSolver):
                 aux_l = None
                 aux_r = None
 
-            wave,s,amdq,apdq = self.rp(q_l, q_r, aux_l,aux_r, state.problem_data['gamma1'], state.problem_data['efix'])
+            wave,s,amdq,apdq = self.rp(q_l, q_r, aux_l,aux_r,state.problem_data['gamma1'], state.problem_data['efix'])
 
             # Update loop limits, these are the limits for the Riemann solver
             # locations, which then update a grid cell value
@@ -341,45 +343,23 @@ class ClawSolver1D(ClawSolver):
             UL = self.num_ghost + grid.num_cells[0] + 1 
 
             # Update q for Godunov update
-            for m in xrange(num_eqn):
-                q[m,LL:UL] -= dtdx[LL:UL]*apdq[m,LL-1:UL-1]
-                q[m,LL-1:UL-1] -= dtdx[LL-1:UL-1]*amdq[m,LL-1:UL-1]
+            godunov_update(dtdx, apdq, amdq, num_eqn, LL, UL, q)
         
             # Compute maximum wave speed
-            cfl = 0.0
-            for mw in xrange(wave.shape[1]):
-                smax1 = np.max(dtdx[LL:UL]*s[mw,LL-1:UL-1])
-                smax2 = np.max(-dtdx[LL-1:UL-1]*s[mw,LL-1:UL-1])
-                cfl = max(cfl,smax1,smax2)
+            cfl = compute_max_wave_speed(wave, dtdx, s, LL, UL)
 
             # If we are doing slope limiting we have more work to do
             if self.order == 2:
-                # Initialize flux corrections
-                f = np.zeros( (num_eqn,grid.num_cells[0] + 2*self.num_ghost) )
-            
                 # Apply Limiters to waves
                 if (limiter > 0).any():
                     wave = tvd.limit(state.num_eqn,wave,s,limiter,dtdx)
 
                 # Compute correction fluxes for second order q_{xx} terms
-                dtdxave = 0.5 * (dtdx[LL-1:UL-1] + dtdx[LL:UL])
-                if self.fwave:
-                    for mw in xrange(wave.shape[1]):
-                        sabs = np.abs(s[mw,LL-1:UL-1])
-                        om = 1.0 - sabs*dtdxave[:UL-LL]
-                        ssign = np.sign(s[mw,LL-1:UL-1])
-                        for m in xrange(num_eqn):
-                            f[m,LL:UL] += 0.5 * ssign * om * wave[m,mw,LL-1:UL-1]
-                else:
-                    for mw in xrange(wave.shape[1]):
-                        sabs = np.abs(s[mw,LL-1:UL-1])
-                        om = 1.0 - sabs*dtdxave[:UL-LL]
-                        for m in xrange(num_eqn):
-                            f[m,LL:UL] += 0.5 * sabs * om * wave[m,mw,LL-1:UL-1]
+                f = compute_correction_fluxes(wave, s, dtdx, num_eqn, num_ghost, grid.num_cells[0], LL, UL, self.fwave)
 
                 # Update q by differencing correction fluxes
                 for m in xrange(num_eqn):
-                    q[m,LL:UL-1] -= dtdx[LL:UL-1] * (f[m,LL+1:UL] - f[m,LL:UL-1]) 
+                   q[m,LL:UL-1] -= dtdx[LL:UL-1] * (f[m,LL+1:UL] - f[m,LL:UL-1])
 
         else: raise Exception("Unrecognized kernel_language; choose 'Fortran' or 'Python'")
 
@@ -387,7 +367,94 @@ class ClawSolver1D(ClawSolver):
         state.set_q_from_qbc(num_ghost,self.qbc)
         if state.num_aux > 0:
             state.set_aux_from_auxbc(num_ghost,self.auxbc)
-   
+
+@cython.boundscheck(False) # turn of bounds-checking for entire function
+def godunov_update_compiled(np.ndarray[np.float64_t, ndim = 1] dtdx, np.ndarray[np.float64_t, ndim = 2] apdq, np.ndarray[np.float64_t, ndim = 2] amdq, int num_eqn, int LL, int UL, np.ndarray[np.float64_t, ndim = 2] q):
+    cdef unsigned int m = 0
+    cdef unsigned int n = 0
+    for m in range(num_eqn):
+        for n in range(LL, UL):
+                q[m,n] -= dtdx[n] * apdq[m, n - 1]
+                q[m,n - 1] -= dtdx[n - 1] * amdq[m,n - 1]
+
+def godunov_update(dtdx, apdq, amdq, num_eqn, LL, UL, q):
+    if use_cython: return godunov_update_compiled(dtdx, apdq, amdq, num_eqn, LL, UL, q)
+
+    for m in xrange(num_eqn):
+        q[m,LL:UL] -= dtdx[LL:UL]*apdq[m,LL-1:UL-1]
+        q[m,LL-1:UL-1] -= dtdx[LL-1:UL-1]*amdq[m,LL-1:UL-1]
+
+@cython.boundscheck(False) # turn of bounds-checking for entire function
+def compute_max_wave_speed_compiled(np.ndarray[np.float64_t, ndim = 3] wave, np.ndarray[np.float64_t, ndim = 1] dtdx, np.ndarray[np.float64_t, ndim = 2] s, int LL, int UL):
+    cdef double cfl = 0.0
+    cdef double smax1 = dtdx[LL] * s[0,LL - 1]
+    cdef double smax2 = -dtdx[LL - 1] * s[0,LL - 1]
+    cdef unsigned int mw, n
+
+    for mw in xrange(wave.shape[1]):
+        for n in xrange(LL, UL):
+            smax1 = max(smax1, dtdx[n] * s[mw,n - 1])
+            smax2 = max(smax2, -dtdx[n - 1] * s[mw,n - 1])
+            cfl = max(cfl, smax1, smax2)
+
+    return cfl
+
+def compute_max_wave_speed(wave, dtdx, s, LL, UL):
+    if use_cython: return compute_max_wave_speed_compiled(wave, dtdx, s, LL, UL)
+
+    cfl = 0.0
+    for mw in xrange(wave.shape[1]):
+        smax1 = np.max(dtdx[LL:UL]*s[mw,LL-1:UL-1])
+        smax2 = np.max(-dtdx[LL-1:UL-1]*s[mw,LL-1:UL-1])
+        cfl = max(cfl,smax1,smax2)
+
+    return cfl
+
+@cython.boundscheck(False) # turn of bounds-checking for entire function
+def compute_correction_fluxes_compiled(np.ndarray[np.float64_t, ndim = 3] wave, np.ndarray[np.float64_t, ndim = 2] s, np.ndarray[np.float64_t, ndim = 1] dtdx, int num_eqn, int num_ghost, int num_cells, int LL, int UL, int fwave):
+    # Initialize flux corrections
+    cdef np.ndarray[np.float64_t, ndim=2] f = np.zeros((num_eqn, num_cells + 2 * num_ghost), dtype=np.float64)
+    cdef np.ndarray[np.float64_t, ndim=1] sabs = np.empty(UL-LL, dtype=np.float64)
+    cdef np.ndarray[np.float64_t, ndim=1] om = np.empty(UL-LL, dtype=np.float64)
+    cdef np.ndarray[np.float64_t, ndim=1] dtdxave = np.empty(UL-LL, dtype=np.float64)
+    cdef np.ndarray[np.float64_t, ndim=1] ssign
+    cdef unsigned int i, mw, n
+    if fwave:
+        ssign = np.empty(UL-LL, dtype=np.float64)
+
+    for i in xrange(LL, UL):
+        dtdxave[i - LL] = 0.5 * (dtdx[i - 1] + dtdx[i])
+
+    for mw in xrange(wave.shape[1]):
+        for n in xrange(LL, UL):
+            sabs[n - LL] = abs(s[mw,n - 1])
+            om[n - LL] = 1.0 - sabs[n - LL] * dtdxave[n - LL]
+            if fwave:
+                ssign[n] = -1 if s[mw,n - 1] < 0 else 1 if s[mw,n - 1] > 0 else 0
+        for m in xrange(num_eqn):
+            for n in xrange(LL, UL):
+                if fwave:
+                    f[m, n] += 0.5 * ssign[n - LL] * om[n - LL] * wave[m, mw, n-1]
+                else:
+                    f[m, n] += 0.5 * sabs[n - LL] * om[n - LL] * wave[m, mw, n-1]
+    return f
+
+def compute_correction_fluxes(wave, s, dtdx, num_eqn, num_ghost, num_cells, LL, UL, fwave):
+    if use_cython: return compute_correction_fluxes_compiled(wave, s, dtdx, num_eqn, num_ghost, num_cells, LL, UL, fwave)
+
+    # Initialize flux corrections
+    f = np.zeros((num_eqn, num_cells + 2 * num_ghost))
+    dtdxave = 0.5 * (dtdx[LL-1:UL-1] + dtdx[LL:UL])
+    for mw in xrange(wave.shape[1]):
+        sabs = np.abs(s[mw,LL-1:UL-1])
+        om = 1.0 - sabs*dtdxave[:UL-LL]
+        ssign = np.sign(s[mw,LL-1:UL-1])
+        for m in xrange(num_eqn):
+            if fwave:
+                f[m,LL:UL] += 0.5 * ssign * om * wave[m,mw,LL-1:UL-1]
+            else:
+                f[m,LL:UL] += 0.5 * sabs * om * wave[m,mw,LL-1:UL-1]
+    return f
 
 # ============================================================================
 #  ClawPack 2d Solver Class
