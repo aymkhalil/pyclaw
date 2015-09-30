@@ -416,20 +416,20 @@ def compute_correction_fluxes_compiled(wave, s, dtdx, num_eqn, num_ghost, num_ce
         ssign = np.empty(UL-LL, dtype=np.float64)
 
     for i in xrange(LL, UL):
-        dtdxave[i] = 0.5 * (dtdx[i - 1] + dtdx[i])
+        dtdxave[i - LL] = 0.5 * (dtdx[i - 1] + dtdx[i])
 
     for mw in xrange(wave.shape[1]):
         for n in xrange(LL, UL):
-            sabs[n] = abs(s[mw,n - 1])
-            om[n] = 1.0 - sabs[n] * dtdxave[n]
+            sabs[n - LL] = abs(s[mw,n - 1])
+            om[n - LL] = 1.0 - sabs[n - LL] * dtdxave[n - LL]
             if fwave:
                 ssign[n] = -1 if s[mw,n - 1] < 0 else 1 if s[mw,n - 1] > 0 else 0
         for m in xrange(num_eqn):
             for n in xrange(LL, UL):
                 if fwave:
-                    f[m, n] += 0.5 * ssign[n] * om[n] * wave[m, mw, n-1]
+                    f[m, n] += 0.5 * ssign[n - LL] * om[n - LL] * wave[m, mw, n-1]
                 else:
-                    f[m, n] += 0.5 * sabs[n] * om[n] * wave[m, mw, n-1]
+                    f[m, n] += 0.5 * sabs[n - LL] * om[n - LL] * wave[m, mw, n-1]
     return f
 
 def compute_correction_fluxes(wave, s, dtdx, num_eqn, num_ghost, num_cells, LL, UL, fwave):
